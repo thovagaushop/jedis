@@ -1,11 +1,7 @@
 package config
 
-type Config struct {
-	Host string
-	Port int
-}
-
-var GlobalConfig = Config{
-	Port: 6379,
-	Host: "0.0.0.0",
-}
+const (
+	HOST           = "0.0.0.0"
+	PORT           = 6379
+	MAX_CONNECTION = 10000
+)
