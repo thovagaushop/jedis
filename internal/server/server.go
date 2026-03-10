@@ -5,14 +5,29 @@ package server
 import (
 	"fmt"
 	"jedis/config"
+	"jedis/internal/core"
 	"jedis/internal/core/iomultiplexing"
 	"net"
 
 	"golang.org/x/sys/unix"
 )
 
-func readCommand(fd int) (any, error) {
-	return nil, nil
+func readCommand(fd int) (*core.JedisCmd, error) {
+	buf := make([]byte, 512)
+
+	n, err := unix.Read(fd, buf)
+	if err != nil {
+		return nil, err
+	}
+	return core.ParseCmd(buf[:n])
+}
+
+func responseCommand(fd int, cmd *core.JedisCmd) error {
+	_, e := unix.Write(fd, core.EvalAndResponse(cmd))
+	if e != nil {
+		return e
+	}
+	return nil
 }
 
 func RunAsyncTCPServer() error {
@@ -98,6 +113,15 @@ func RunAsyncTCPServer() error {
 				}
 			} else {
 				go readCommand(int(ev.Fd))
+				cmd, err := readCommand(int(ev.Fd))
+
+				if err != nil {
+					unix.Close(int(ev.Fd))
+					continue
+				}
+
+				go responseCommand(int(ev.Fd), cmd)
+
 			}
 		}
 	}
