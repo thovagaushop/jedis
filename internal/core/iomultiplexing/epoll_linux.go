@@ -29,10 +29,16 @@ func CreateIOMultiplexing() (IOMultiplexing, error) {
 }
 
 func (ep *Epoll) Register(event Event) error {
-	var epollEvent unix.EpollEvent
-	epollEvent.Fd = event.Fd
-	epollEvent.Events = unix.EPOLLIN
+	epollEvent := event.toNative()
 	if err := unix.EpollCtl(int(ep.Fd), unix.EPOLL_CTL_ADD, int(event.Fd), &epollEvent); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (ep *Epoll) Modify(event Event) error {
+	epollEvent := event.toNative()
+	if err := unix.EpollCtl(int(ep.Fd), unix.EPOLL_CTL_MOD, int(event.Fd), &epollEvent); err != nil {
 		return err
 	}
 	return nil
@@ -45,11 +51,13 @@ func (ep *Epoll) Check() ([]Event, error) {
 		return nil, err
 	}
 
+	events := make([]Event, nevents)
+
 	for i := 0; i < nevents; i++ {
-		ep.genericEvents[i] = createEvent(ep.epollEvents[i])
+		events[i] = createEvent(ep.epollEvents[i])
 	}
 
-	return ep.genericEvents[:nevents], nil
+	return events, nil
 }
 
 func (ep *Epoll) Close() error {

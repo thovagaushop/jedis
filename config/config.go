@@ -5,3 +5,5 @@ const (
 	PORT           = 6379
 	MAX_CONNECTION = 10000
 )
+
+var MODE = "ASYNC"

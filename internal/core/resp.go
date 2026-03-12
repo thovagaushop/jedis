@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"jedis/internal/constant"
-	"log"
 	"strings"
 )
 
@@ -50,9 +49,6 @@ func readLen(data []byte) (int, int, error) {
 // $5\r\nhello\r\n
 func readBulkString(data []byte) (string, int, error) {
 	length, pos, _ := readLen(data)
-
-	print(length, pos)
-
 	return string(data[pos : pos+length]), pos + length + 2, nil
 }
 
@@ -75,7 +71,6 @@ func readArray(data []byte) ([]interface{}, int, error) {
 }
 
 func DecodeOne(data []byte) (interface{}, int, error) {
-	log.Println(string(data))
 	if len(data) == 0 {
 		return nil, 0, errors.New("no data")
 	}
@@ -155,19 +150,17 @@ func Encode(value interface{}, isSimpleString bool) []byte {
 	}
 }
 
-func ParseCmd(data []byte) (*JedisCmd, error) {
-	log.Println("Into parse cmd")
-	value, err := Decode(data)
+func ParseCmd(data []byte) (*JedisCmd, int, error) {
+	value, pos, err := DecodeOne(data)
 
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	array, ok := value.([]interface{})
 
 	if !ok {
-		log.Print("error")
-		return nil, errors.New("invalid")
+		return nil, 0, errors.New("invalid")
 	}
 
 	tokens := make([]string, len(array))
@@ -179,5 +172,5 @@ func ParseCmd(data []byte) (*JedisCmd, error) {
 	return &JedisCmd{
 		Cmd:  strings.ToUpper(tokens[0]),
 		Args: tokens[1:],
-	}, nil
+	}, pos, nil
 }
