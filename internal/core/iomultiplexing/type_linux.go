@@ -1,3 +1,5 @@
+//go:build linux
+
 package iomultiplexing
 
 import "golang.org/x/sys/unix"

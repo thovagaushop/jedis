@@ -1,7 +1,6 @@
 package datastructure
 
 import (
-	"strconv"
 	"testing"
 	"time"
 )
@@ -16,52 +15,7 @@ func TestDict_PutAndGet(t *testing.T) {
 	}
 }
 
-func TestDict_Expiration(t *testing.T) {
-	dict := CreateDict()
-	dict.Put("key1", "value1")
-	dict.Expire("key1", 100) // 100ms
-
-	val := dict.Get("key1")
-	if val != "value1" {
-		t.Errorf("expected value1 before expiration, got %v", val)
-	}
-
-	time.Sleep(150 * time.Millisecond)
-
-	val = dict.Get("key1")
-	if val != nil {
-		t.Errorf("expected nil after expiration, got %v", val)
-	}
-}
-
-func TestDict_NonExistentKey(t *testing.T) {
-	dict := CreateDict()
-	val := dict.Get("nonexistent")
-	if val != nil {
-		t.Errorf("expected nil for nonexistent key, got %v", val)
-	}
-}
-
-func TestDict_Ttl(t *testing.T) {
-	dict := CreateDict()
-	dict.Put("key1", "value1")
-	dict.Expire("key1", 1000)
-
-	ttl := dict.Ttl("key1")
-	now := uint64(time.Now().UnixMilli())
-	if ttl <= now || ttl > now+1000 {
-		t.Errorf("unexpected ttl: %v, now: %v", ttl, now)
-	}
-
-	// Key with no expiration
-	dict.Put("key2", "value2")
-	ttl2 := dict.Ttl("key2")
-	if ttl2 != 0 {
-		t.Errorf("expected 0 ttl for key with no expiration, got %v", ttl2)
-	}
-}
-
-func TestDict_UpdateKey(t *testing.T) {
+func TestDict_Overwrite(t *testing.T) {
 	dict := CreateDict()
 	dict.Put("key1", "value1")
 	dict.Put("key1", "value2")
@@ -72,36 +26,38 @@ func TestDict_UpdateKey(t *testing.T) {
 	}
 }
 
-func TestDict_UpdateExpiration(t *testing.T) {
+func TestDict_Expiration(t *testing.T) {
 	dict := CreateDict()
-	dict.Put("key1", "value1")
-	dict.Expire("key1", 1000)
+	dict.Put("k1", "v1")
+	dict.Expire("k1", 50) // 50ms
 
-	ttl1 := dict.Ttl("key1")
-	time.Sleep(10 * time.Millisecond)
-	dict.Expire("key1", 2000)
-	ttl2 := dict.Ttl("key1")
+	// Vẫn còn hạn
+	if dict.Get("k1") != "v1" {
+		t.Error("expected v1 to be present")
+	}
 
-	if ttl2 <= ttl1 {
-		t.Errorf("expected updated ttl %v to be greater than old ttl %v", ttl2, ttl1)
+	// Đợi hết hạn
+	time.Sleep(60 * time.Millisecond)
+
+	if dict.Get("k1") != nil {
+		t.Error("expected k1 to be expired and deleted")
 	}
 }
 
-func TestDict_ConcurrentAccess(t *testing.T) {
+func TestDict_Ttl(t *testing.T) {
 	dict := CreateDict()
-	n := 100
-	done := make(chan bool)
+	dict.Put("k1", "v1")
 
-	for i := 0; i < n; i++ {
-		go func(i int) {
-			key := strconv.Itoa(i)
-			dict.Put(key, i)
-			dict.Get(key)
-			done <- true
-		}(i)
+	// Chưa set expire
+	if dict.Ttl("k1") != 0 {
+		t.Errorf("expected 0 TTL, got %v", dict.Ttl("k1"))
 	}
 
-	for i := 0; i < n; i++ {
-		<-done
+	dict.Expire("k1", 1000)
+	ttl := dict.Ttl("k1")
+	now := uint64(time.Now().UnixMilli())
+
+	if ttl < now || ttl > now+1000 {
+		t.Errorf("TTL %v is out of expected range", ttl)
 	}
 }

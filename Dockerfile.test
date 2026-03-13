@@ -13,5 +13,5 @@ RUN go mod download
 # Copy the rest of the source code
 COPY . .
 
-# Default command to run tests
-CMD ["go", "test", "-v", "./internal/server/..."]
+# Default command to run all tests
+CMD ["go", "test", "-race", "-v", "./internal/server/..."]

@@ -1,5 +1,3 @@
-//go:build linux
-
 package server
 
 import (
@@ -108,5 +106,59 @@ func TestAsyncServer_Integration(t *testing.T) {
 				t.Errorf("pipelined PING %d: expected +PONG, got %q", i, line)
 			}
 		}
+	})
+
+	t.Run("StressRaceCondition", func(t *testing.T) {
+		const numClients = 100
+		const opsPerClient = 200
+		var wg sync.WaitGroup
+		wg.Add(numClients)
+
+		for i := 0; i < numClients; i++ {
+			go func(cid int) {
+				defer wg.Done()
+				conn, err := net.Dial("tcp", "127.0.0.1:6379")
+				if err != nil {
+					t.Errorf("Client %d failed to connect: %v", cid, err)
+					return
+				}
+				defer conn.Close()
+
+				reader := bufio.NewReader(conn)
+				for j := 0; j < opsPerClient; j++ {
+					// Mix of shared and unique keys
+					var key string
+					if j%2 == 0 {
+						key = "shared-key"
+					} else {
+						key = fmt.Sprintf("unique-key-%d-%d", cid, j)
+					}
+
+					val := fmt.Sprintf("v-%d-%d", cid, j)
+
+					// SET
+					setCmd := fmt.Sprintf("*3\r\n$3\r\nSET\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(key), key, len(val), val)
+					_, err := conn.Write([]byte(setCmd))
+					if err != nil {
+						return
+					}
+					_, _ = reader.ReadString('\n') // +OK
+
+					// GET
+					getCmd := fmt.Sprintf("*2\r\n$3\r\nGET\r\n$%d\r\n%s\r\n", len(key), key)
+					_, err = conn.Write([]byte(getCmd))
+					if err != nil {
+						return
+					}
+					line1, _ := reader.ReadString('\n') // bulk len
+					if line1 == "$-1\r\n" {
+						// Key might have been overwritten or something if shared, but should exist
+						continue
+					}
+					_, _ = reader.ReadString('\n') // value
+				}
+			}(i)
+		}
+		wg.Wait()
 	})
 }

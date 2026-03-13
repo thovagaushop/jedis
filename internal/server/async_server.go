@@ -1,5 +1,3 @@
-//go:build linux
-
 package server
 
 import (
@@ -126,7 +124,7 @@ func flushOutput(ioMultiplexing iomultiplexing.IOMultiplexing, client *Client) e
 }
 
 func RunAsyncTCPServer() error {
-	fd, err := unix.Socket(unix.AF_INET, unix.O_NONBLOCK|unix.SOCK_STREAM, 0)
+	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, 0)
 	if err != nil {
 		return err
 	}
@@ -227,3 +225,7 @@ func RunAsyncTCPServer() error {
 
 	return nil
 }
+
+// func RunWorkerServer() error {
+
+// }
