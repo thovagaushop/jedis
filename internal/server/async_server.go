@@ -2,6 +2,8 @@ package server
 
 import (
 	"fmt"
+	"hash/crc32"
+	"io"
 	"jedis/config"
 	"jedis/internal/constant"
 	"jedis/internal/core"
@@ -34,93 +36,25 @@ type Client struct {
 	outputBuff []byte
 }
 
-var clientMapping map[int]*Client
-
-func newClient(fd int) *Client {
-	client := &Client{
-		fd:         fd,
-		inputBuff:  make([]byte, 0),
-		outputBuff: make([]byte, 0),
-	}
-	clientMapping[fd] = client
-	return client
-}
-
-func delClient(fd int) {
-	delete(clientMapping, fd)
-	unix.Close(fd)
-}
-
-func handleRead(ioMultiplexing iomultiplexing.IOMultiplexing, fd int) error {
-	client := clientMapping[fd]
-	buf := make([]byte, 1024)
+func readCommandFD(fd int) (*core.JedisCmd, error) {
+	var buf = make([]byte, 512)
 	n, err := unix.Read(fd, buf)
 	if err != nil {
-		if err == unix.EAGAIN || err == unix.EWOULDBLOCK {
-			return nil
-		}
-		return err
+		return nil, err
 	}
-	if n == 0 {
-		return fmt.Errorf("client closed")
-	}
-
-	client.inputBuff = append(client.inputBuff, buf[:n]...)
-
-	// Loop to parse all commands available in the buffer (Pipelining)
-	for len(client.inputBuff) > 0 {
-		cmd, pos, err := core.ParseCmd(client.inputBuff)
-		if err != nil {
-			// Incomplete command, wait for more data
-			break
-		}
-
-		// Consume parsed bytes from buffer
-		client.inputBuff = client.inputBuff[pos:]
-
-		// Execute
-		res := core.EvalAndResponse(cmd)
-		client.outputBuff = append(client.outputBuff, res...)
-	}
-
-	return flushOutput(ioMultiplexing, client)
+	cmd, _, err := core.ParseCmd(buf[:n])
+	return cmd, err
 }
 
-func flushOutput(ioMultiplexing iomultiplexing.IOMultiplexing, client *Client) error {
-	if len(client.outputBuff) == 0 {
-		return ioMultiplexing.Modify(iomultiplexing.Event{
-			Fd:     int32(client.fd),
-			OpCode: iomultiplexing.OpcodeRead,
-		})
-	}
-
-	n, err := unix.Write(client.fd, client.outputBuff)
+func responseRw(cmd *core.JedisCmd, rw io.ReadWriter) {
+	err := core.EvalAndResponse(cmd, rw)
 	if err != nil {
-		if err == unix.EAGAIN || err == unix.EWOULDBLOCK {
-			// Kernel buffer full, wait for EPOLLOUT
-			return ioMultiplexing.Modify(iomultiplexing.Event{
-				Fd:     int32(client.fd),
-				OpCode: iomultiplexing.OpcodeRead | iomultiplexing.OpcodeWrite,
-			})
-		}
-		return err
+		responseErrorRw(err, rw)
 	}
+}
 
-	client.outputBuff = client.outputBuff[n:]
-
-	if len(client.outputBuff) == 0 {
-		// Done writing, stop listening for EPOLLOUT
-		return ioMultiplexing.Modify(iomultiplexing.Event{
-			Fd:     int32(client.fd),
-			OpCode: iomultiplexing.OpcodeRead,
-		})
-	} else {
-		// Still have data, ensure we listen for EPOLLOUT
-		return ioMultiplexing.Modify(iomultiplexing.Event{
-			Fd:     int32(client.fd),
-			OpCode: iomultiplexing.OpcodeRead | iomultiplexing.OpcodeWrite,
-		})
-	}
+func responseErrorRw(err error, rw io.ReadWriter) {
+	rw.Write([]byte(fmt.Sprintf("-%s%s", err, core.CRLF)))
 }
 
 func RunAsyncTCPServer() error {
@@ -156,8 +90,6 @@ func RunAsyncTCPServer() error {
 		return err
 	}
 
-	clientMapping = make(map[int]*Client)
-
 	fmt.Println("Running jedis server (Single-threaded Event Loop)")
 	for atomic.LoadInt32(&eStatus) != constant.EngineStatusShuttingDown {
 		events, err := ioMultiplexing.Check()
@@ -191,33 +123,19 @@ func RunAsyncTCPServer() error {
 					unix.Close(connFd)
 					continue
 				}
-				newClient(connFd)
 				fmt.Printf("New connection: %d\n", connFd)
 			} else {
-				client, ok := clientMapping[int(ev.Fd)]
-				if !ok {
+				cmm := core.FDComm{Fd: int(ev.Fd)}
+				cmd, err := readCommandFD(int(ev.Fd))
+
+				if err != nil {
+					unix.Close(int(ev.Fd))
+					fmt.Printf("client closed: %d\r\n", ev.Fd)
+					atomic.SwapInt32(&eStatus, constant.EngineStatusWaiting)
 					continue
 				}
 
-				if ev.OpCode&iomultiplexing.OpcodeRead != 0 {
-					if err := handleRead(ioMultiplexing, int(ev.Fd)); err != nil {
-						fmt.Printf("Closing client %d: %v\n", ev.Fd, err)
-						delClient(int(ev.Fd))
-						atomic.SwapInt32(&eStatus, constant.EngineStatusWaiting)
-						continue
-					}
-				}
-
-				// Only if client still exists
-				if _, ok := clientMapping[int(ev.Fd)]; ok {
-					if ev.OpCode&iomultiplexing.OpcodeWrite != 0 {
-						if err := flushOutput(ioMultiplexing, client); err != nil {
-							fmt.Printf("Write error on client %d: %v\n", ev.Fd, err)
-							delClient(int(ev.Fd))
-							atomic.SwapInt32(&eStatus, constant.EngineStatusWaiting)
-						}
-					}
-				}
+				responseRw(cmd, cmm)
 			}
 			atomic.SwapInt32(&eStatus, constant.EngineStatusWaiting)
 		}
@@ -226,6 +144,8 @@ func RunAsyncTCPServer() error {
 	return nil
 }
 
-// func RunWorkerServer() error {
-
-// }
+func getShardID(key string, totalPartition int) int {
+	checkSum := crc32.ChecksumIEEE([]byte(key))
+	partition := int(checkSum % uint32(totalPartition))
+	return partition
+}

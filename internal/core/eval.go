@@ -1,8 +1,11 @@
 package core
 
-import "jedis/internal/constant"
+import (
+	"io"
+	"jedis/internal/constant"
+)
 
-func EvalAndResponse(cmd *JedisCmd) []byte {
+func EvalAndResponse(cmd *JedisCmd, c io.ReadWriter) error {
 	var res []byte
 
 	switch cmd.Cmd {
@@ -17,5 +20,6 @@ func EvalAndResponse(cmd *JedisCmd) []byte {
 		res = []byte(constant.RESP_OK)
 	}
 
-	return res
+	_, err := c.Write(res)
+	return err
 }

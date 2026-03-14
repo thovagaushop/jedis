@@ -1,19 +1,12 @@
 package engine
 
 import (
-	"hash/crc32"
 	"jedis/config"
 	"jedis/internal/core"
 	"jedis/internal/server"
 	"os"
 	"sync"
 )
-
-func getShardID(key string, totalPartition int) int {
-	checkSum := crc32.ChecksumIEEE([]byte(key))
-	partition := int(checkSum % uint32(totalPartition))
-	return partition
-}
 
 type Worker struct {
 	id       int
