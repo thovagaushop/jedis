@@ -2,7 +2,6 @@ package server
 
 import (
 	"fmt"
-	"hash/crc32"
 	"io"
 	"jedis/config"
 	"jedis/internal/constant"
@@ -47,7 +46,9 @@ func readCommandFD(fd int) (*core.JedisCmd, error) {
 }
 
 func responseRw(cmd *core.JedisCmd, rw io.ReadWriter) {
-	err := core.EvalAndResponse(cmd, rw)
+	res := core.EvalAndResponse(cmd)
+	_, err := rw.Write(res)
+
 	if err != nil {
 		responseErrorRw(err, rw)
 	}
@@ -57,26 +58,42 @@ func responseErrorRw(err error, rw io.ReadWriter) {
 	rw.Write([]byte(fmt.Sprintf("-%s%s", err, core.CRLF)))
 }
 
-func RunAsyncTCPServer() error {
+func bindSocket() (int, error) {
+	// In here, i decide to use SO_REUSEPORT to allow multiple processes to bind to the same port for multil thread version
 	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, 0)
 	if err != nil {
-		return err
+		return -1, err
 	}
-	defer unix.Close(fd)
+
+	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_REUSEPORT, 1); err != nil {
+		unix.Close(fd)
+		return -1, err
+	}
 
 	if err := unix.SetNonblock(fd, true); err != nil {
-		return err
+		unix.Close(fd)
+		return -1, err
 	}
 
 	addr := unix.SockaddrInet4{Port: config.PORT}
 	copy(addr.Addr[:], net.ParseIP(config.HOST).To4())
 
 	if err := unix.Bind(fd, &addr); err != nil {
-		return err
+		return -1, err
 	}
 	if err := unix.Listen(fd, config.MAX_CONNECTION); err != nil {
+		return -1, err
+	}
+	return fd, nil
+}
+
+func RunAsyncTCPServer() error {
+	fd, err := bindSocket()
+
+	if err != nil {
 		return err
 	}
+	defer unix.Close(fd)
 
 	ioMultiplexing, err := iomultiplexing.CreateIOMultiplexing()
 	if err != nil {
@@ -92,7 +109,7 @@ func RunAsyncTCPServer() error {
 
 	fmt.Println("Running jedis server (Single-threaded Event Loop)")
 	for atomic.LoadInt32(&eStatus) != constant.EngineStatusShuttingDown {
-		events, err := ioMultiplexing.Check()
+		events, err := ioMultiplexing.Check(-1)
 		if err != nil {
 			return err
 		}
@@ -123,14 +140,14 @@ func RunAsyncTCPServer() error {
 					unix.Close(connFd)
 					continue
 				}
-				fmt.Printf("New connection: %d\n", connFd)
+				// fmt.Printf("New connection: %d\n", connFd)
 			} else {
 				cmm := core.FDComm{Fd: int(ev.Fd)}
 				cmd, err := readCommandFD(int(ev.Fd))
 
 				if err != nil {
 					unix.Close(int(ev.Fd))
-					fmt.Printf("client closed: %d\r\n", ev.Fd)
+					// fmt.Printf("client closed: %d\r\n", ev.Fd)
 					atomic.SwapInt32(&eStatus, constant.EngineStatusWaiting)
 					continue
 				}
@@ -142,10 +159,4 @@ func RunAsyncTCPServer() error {
 	}
 
 	return nil
-}
-
-func getShardID(key string, totalPartition int) int {
-	checkSum := crc32.ChecksumIEEE([]byte(key))
-	partition := int(checkSum % uint32(totalPartition))
-	return partition
 }

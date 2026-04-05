@@ -1,11 +1,12 @@
 services:
   app:
-    build: .
-    volumes:
-      - .:/app
+    build: 
+      context: .
+      dockerfile: Dockerfile.native
+    command: ["./jedis", "-mode=sharding", "-cpus=4"]
     ports:
       - "6379:6379"
-    environment:
-      - GOOS=linux
-    stdin_open: true
-    tty: true
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'

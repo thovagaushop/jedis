@@ -46,13 +46,24 @@ func (k *Kqueue) Modify(event Event) error {
 	return nil
 }
 
-func (k *Kqueue) Check() ([]Event, error) {
-	n, err := unix.Kevent(int(k.Fd), nil, k.kqueueEvents, nil)
+func (k *Kqueue) Check(msTimeout int64) ([]Event, error) {
+	var timeout *unix.Timespec
+	if msTimeout >= 0 {
+		timeout = &unix.Timespec{
+			Sec:  msTimeout / 1000,
+			Nsec: (msTimeout % 1000) * 1e6,
+		}
+	}
+	
+	n, err := unix.Kevent(int(k.Fd), nil, k.kqueueEvents, timeout)
 
 	if err != nil {
+		if err == unix.EINTR {
+			return nil, nil
+		}
 		return nil, err
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		k.genericEvents[i] = createEvent(k.kqueueEvents[i])
 	}
 

@@ -15,6 +15,6 @@ type Event struct {
 type IOMultiplexing interface {
 	Register(event Event) error
 	Modify(event Event) error
-	Check() ([]Event, error)
+	Check(msTimeout int64) ([]Event, error)
 	Close() error
 }

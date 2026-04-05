@@ -168,9 +168,14 @@ func ParseCmd(data []byte) (*JedisCmd, int, error) {
 	for i, v := range array {
 		tokens[i] = v.(string)
 	}
+	var key *string
+	if len(tokens) > 1 {
+		key = &tokens[1]
+	}
 
 	return &JedisCmd{
 		Cmd:  strings.ToUpper(tokens[0]),
+		Key:  key,
 		Args: tokens[1:],
 	}, pos, nil
 }

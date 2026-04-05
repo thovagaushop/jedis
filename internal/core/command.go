@@ -4,6 +4,7 @@ import "golang.org/x/sys/unix"
 
 type JedisCmd struct {
 	Cmd  string
+	Key  *string
 	Args []string
 }
 
